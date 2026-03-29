@@ -20,6 +20,9 @@ public:
                         QWidget* parent = nullptr);
     ~MainWindow() override;
 
+    // Access webcam widget for external frame delivery
+    WebcamWidget* webcamWidget() const { return webcamView_; }
+
 private slots:
     void onRun();
     void onPause();

@@ -36,6 +36,7 @@
 
 // GUI
 #include "gui/MainWindow.h"
+#include "gui/WebcamWidget.h"
 
 using namespace biobrain;
 
@@ -143,11 +144,24 @@ int main(int argc, char* argv[]) {
     auto webcam = std::make_unique<WebcamCapture>(640, 480, 30);
     auto encoder = std::make_unique<RetinalEncoder>(64);  // 64x64 = 8192 RGCs
 
-    // Wire webcam → retinal encoder → simulation
+    // Create GUI first so we can wire webcam to it
+    auto mainWindow = std::make_unique<MainWindow>(simulation);
+    mainWindow->setWindowTitle("BioBrain — Neural Simulation Dashboard");
+    mainWindow->resize(1400, 900);
+    mainWindow->show();
+
+    // Wire webcam → retinal encoder → simulation AND → GUI webcam widget
     auto* encoderPtr = encoder.get();
     auto simWeakPtr = std::weak_ptr<Simulation>(simulation);
+    auto* webcamWidget = mainWindow->webcamWidget();
 
-    webcam->setFrameCallback([encoderPtr, simWeakPtr](const FrameData& frame) {
+    webcam->setFrameCallback([encoderPtr, simWeakPtr, webcamWidget](const FrameData& frame) {
+        // Feed the GUI webcam display (works even when sim is stopped)
+        if (webcamWidget && !frame.pixels.empty()) {
+            webcamWidget->updateFrame(frame.pixels.data(), frame.width, frame.height);
+        }
+
+        // Feed retinal encoder → simulation (only when running)
         auto sim = simWeakPtr.lock();
         if (!sim || !sim->isRunning()) return;
 
@@ -174,18 +188,17 @@ int main(int argc, char* argv[]) {
         sim->injectSpikes(events);
     });
 
-    // Create GUI
-    auto mainWindow = std::make_unique<MainWindow>(simulation);
-    mainWindow->setWindowTitle("BioBrain — Neural Simulation Dashboard");
-    mainWindow->resize(1400, 900);
-    mainWindow->show();
-
     // Start webcam
     if (webcam->start()) {
         std::cout << "Webcam started (640x480 @ 30fps)\n";
     } else {
         std::cerr << "Warning: Could not start webcam. Running without visual input.\n";
     }
+
+    // Auto-start the simulation
+    simulation->start();
+    recorder->start();
+    std::cout << "Simulation auto-started.\n";
 
     // Handle shutdown signal
     QTimer shutdownTimer;
