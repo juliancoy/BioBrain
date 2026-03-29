@@ -85,6 +85,20 @@ private:
 
     /// Factory method to create a neuron of the given model type.
     std::unique_ptr<Neuron> createNeuron(NeuronModelType model, uint32_t neuron_id);
+
+public:
+    // Pre-synaptic index: neuron_id → list of synapse indices for fast lookup
+    // Call buildSynapseIndex() after all synapses are added
+    void buildSynapseIndex();
+    const std::vector<uint32_t>& getSynapsesForPreNeuron(uint32_t neuron_id) const;
+    const std::vector<uint32_t>& getPostSynapsesForNeuron(uint32_t neuron_id) const;
+
+private:
+    // pre_id → vector of indices into internal_synapses_
+    std::unordered_map<uint32_t, std::vector<uint32_t>> pre_synapse_index_;
+    // post_id → vector of indices into internal_synapses_
+    std::unordered_map<uint32_t, std::vector<uint32_t>> post_synapse_index_;
+    bool index_built_ = false;
 };
 
 } // namespace biobrain

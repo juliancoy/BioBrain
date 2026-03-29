@@ -29,6 +29,11 @@ BrainRegion* Simulation::getRegion(uint32_t id) const {
 void Simulation::start() {
     if (running_.load()) return;
 
+    // Build synapse indices for O(1) lookup instead of O(N) scan
+    for (auto& r : regions_) {
+        r->buildSynapseIndex();
+    }
+
     running_.store(true);
     paused_.store(false);
     last_gui_update_ = std::chrono::steady_clock::now();
@@ -73,32 +78,32 @@ double Simulation::spikesPerSecond() const {
 // ---------- Main simulation loop ----------
 
 void Simulation::simulationLoop(std::stop_token stop_token) {
-    constexpr int substeps_per_ms = 10; // 10 * 0.1ms = 1ms
-    constexpr auto one_ms = std::chrono::microseconds(1000);
     // ~60 Hz GUI update interval: ~16.67ms
     constexpr auto gui_interval = std::chrono::microseconds(16667);
+    // Budget: spend at most 8ms per iteration to leave CPU for GUI
+    constexpr auto max_step_budget = std::chrono::milliseconds(8);
 
     while (!stop_token.stop_requested() && running_.load()) {
         if (paused_.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
 
-        auto step_start = std::chrono::steady_clock::now();
+        auto iter_start = std::chrono::steady_clock::now();
 
-        // Run 10 substeps = 1ms of simulation time
-        for (int i = 0; i < substeps_per_ms; ++i) {
+        // Run as many substeps as we can within the time budget
+        int steps_done = 0;
+        while (std::chrono::steady_clock::now() - iter_start < max_step_budget) {
             stepSimulation();
+            steps_done++;
+            // Yield periodically to prevent starvation
+            if (steps_done % 5 == 0) {
+                std::this_thread::yield();
+            }
         }
 
-        // Real-time synchronization: 1ms sim should take ~1ms wall-clock
-        auto step_end = std::chrono::steady_clock::now();
-        auto elapsed = step_end - step_start;
-        if (elapsed < one_ms) {
-            std::this_thread::sleep_for(one_ms - elapsed);
-        }
-        // Note: if elapsed > one_ms, we're falling behind real-time
-        // but we do NOT drop events -- just continue
+        // Always sleep at least 2ms to give GUI thread breathing room
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
 
         // GUI update at ~60Hz
         auto now = std::chrono::steady_clock::now();
@@ -118,28 +123,54 @@ void Simulation::stepSimulation() {
     // 1. Get all events that should be delivered at or before current time
     auto events = router_.getEventsUntil(t);
 
-    // 2. Deliver spikes to target neurons (updates synaptic conductances)
+    // 2. Deliver spikes and track which neurons received input
     deliverSpikes(events);
 
-    // 3. For each region: compute synaptic currents and update neurons
+    // 3. For each region: only update neurons that have pending synaptic input
+    // This is the key optimization — skip regions/neurons with no activity
     for (auto& region : regions_) {
         auto* backend = region->computeBackend();
         if (!backend) continue;
 
         size_t n = region->neurons().size();
-        std::vector<double> I_syn(n, 0.0);
 
-        // Accumulate synaptic currents from internal synapses
-        for (auto& syn : region->internalSynapses()) {
-            // Compute local neuron index from post_id
-            uint32_t local_idx = syn.post_id - region->baseNeuronId();
-            if (local_idx < n) {
-                double V_post = region->neurons()[local_idx]->voltage();
-                I_syn[local_idx] += syn.computeCurrent(V_post, DT);
+        // Only compute synaptic currents for neurons targeted by recent events
+        std::vector<double> I_syn(n, 0.0);
+        bool has_activity = false;
+
+        // Check active synapses (conductance > 0) — use the active set
+        auto& synapses = region->internalSynapses();
+
+        // Quick check: do we have any events targeting this region?
+        bool region_has_events = false;
+        for (const auto& ev : events) {
+            if (ev.target_region == region->id()) {
+                region_has_events = true;
+                break;
             }
         }
 
-        // Update all neurons via the compute backend
+        if (region_has_events || region->activeNeuronCount() > 0) {
+            // Only scan synapses for this region
+            for (size_t si = 0; si < synapses.size(); ++si) {
+                auto& syn = synapses[si];
+                if (syn.conductance() <= 0.0) continue;
+                uint32_t local_idx = syn.post_id - region->baseNeuronId();
+                if (local_idx < n) {
+                    double V_post = region->neurons()[local_idx]->voltage();
+                    I_syn[local_idx] += syn.computeCurrent(V_post, DT);
+                    has_activity = true;
+                }
+            }
+        }
+
+        // Skip neuron updates entirely if no activity in this region
+        if (!has_activity && !region_has_events) {
+            region->setCurrentTime(t + DT);
+            continue;
+        }
+
+        // Update neurons via the compute backend
         UpdateResult result = backend->updateNeurons(*region, DT, I_syn);
 
         // 4. For spiked neurons: generate new spike events for outgoing synapses
@@ -150,23 +181,23 @@ void Simulation::stepSimulation() {
             // Record spike time for firing rate stats
             region->recordSpikeTime(spike_time);
 
-            // Internal synapses: create events for post-synaptic targets
-            for (const auto& syn : region->internalSynapses()) {
-                if (syn.pre_id == neuron_id) {
-                    SpikeEvent ev;
-                    ev.source_id = neuron_id;
-                    ev.target_id = syn.post_id;
-                    ev.time = spike_time;
-                    ev.delay = syn.delay;
-                    ev.source_region = region->id();
-                    ev.target_region = region->id();
-                    router_.submitSpike(ev);
-                }
+            // Internal synapses: use pre-synaptic index for O(1) lookup
+            auto& region_synapses = region->internalSynapses();
+            for (uint32_t si : region->getSynapsesForPreNeuron(neuron_id)) {
+                auto& syn = region_synapses[si];
+                SpikeEvent ev;
+                ev.source_id = neuron_id;
+                ev.target_id = syn.post_id;
+                ev.time = spike_time;
+                ev.delay = syn.delay;
+                ev.source_region = region->id();
+                ev.target_region = region->id();
+                router_.submitSpike(ev);
             }
 
-            // Inter-region projections
-            for (const auto& [target_region_id, synapses] : region->projections()) {
-                for (const auto& syn : synapses) {
+            // Inter-region projections (these are smaller, linear scan is OK)
+            for (const auto& [target_region_id, proj_synapses] : region->projections()) {
+                for (const auto& syn : proj_synapses) {
                     if (syn.pre_id == neuron_id) {
                         SpikeEvent ev;
                         ev.source_id = neuron_id;
@@ -219,30 +250,30 @@ void Simulation::stepSimulation() {
 
 void Simulation::deliverSpikes(const std::vector<SpikeEvent>& events) {
     for (const auto& ev : events) {
-        // Find the target region
-        BrainRegion* target = getRegion(ev.target_region);
-        if (!target) continue;
-
-        // Deliver the spike to matching synapses within the target region
         double arrival_time = ev.time + ev.delay;
 
-        // Check internal synapses of the target region
-        for (auto& syn : target->internalSynapses()) {
-            if (syn.pre_id == ev.source_id && syn.post_id == ev.target_id) {
-                syn.deliverSpike(arrival_time);
+        if (ev.source_region == ev.target_region) {
+            // Internal spike: use pre-synaptic index
+            BrainRegion* region = getRegion(ev.target_region);
+            if (!region) continue;
+            auto& synapses = region->internalSynapses();
+            for (uint32_t si : region->getSynapsesForPreNeuron(ev.source_id)) {
+                auto& syn = synapses[si];
+                if (syn.post_id == ev.target_id) {
+                    syn.deliverSpike(arrival_time);
+                }
             }
-        }
-
-        // Check incoming projections -- the synapse lives in the source region's
-        // projections map, but the conductance state we need is there too.
-        BrainRegion* source = getRegion(ev.source_region);
-        if (source && source->id() != target->id()) {
+        } else {
+            // Inter-region spike: check source's projection to target
+            BrainRegion* source = getRegion(ev.source_region);
+            if (!source) continue;
             auto& proj = source->projections();
             auto it = proj.find(ev.target_region);
             if (it != proj.end()) {
                 for (auto& syn : const_cast<std::vector<Synapse>&>(it->second)) {
                     if (syn.pre_id == ev.source_id && syn.post_id == ev.target_id) {
                         syn.deliverSpike(arrival_time);
+                        break;  // typically 1:1 mapping
                     }
                 }
             }

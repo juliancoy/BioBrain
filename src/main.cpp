@@ -230,7 +230,32 @@ int main(int argc, char* argv[]) {
     // Auto-start the simulation
     simulation->start();
     recorder->start();
-    std::cout << "Simulation auto-started.\n";
+    std::cerr << "Simulation auto-started.\n";
+
+    // Periodic stimulus: inject random spikes into Retina every 100ms
+    // to drive visible activity through the visual cortex pipeline
+    QTimer stimulusTimer;
+    auto simWeak2 = std::weak_ptr<Simulation>(simulation);
+    QObject::connect(&stimulusTimer, &QTimer::timeout, [simWeak2]() {
+        auto sim = simWeak2.lock();
+        if (!sim || !sim->isRunning()) return;
+
+        double t = sim->currentTime();
+        std::vector<SpikeEvent> events;
+        // Inject 500 spikes spread across retinal neurons
+        for (uint32_t i = 0; i < 500; ++i) {
+            SpikeEvent ev;
+            ev.source_id = (i * 17) % 8192;  // pseudo-random retinal neurons
+            ev.target_id = ev.source_id;
+            ev.time = t + (i * 0.05);
+            ev.delay = 2.0;
+            ev.source_region = 0;  // Retina
+            ev.target_region = 1;  // LGN
+            events.push_back(ev);
+        }
+        sim->injectSpikes(events);
+    });
+    stimulusTimer.start(100);  // every 100ms
 
     // Handle shutdown signal
     QTimer shutdownTimer;

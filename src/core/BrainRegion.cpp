@@ -106,4 +106,26 @@ std::unique_ptr<Neuron> BrainRegion::createNeuron(NeuronModelType model, uint32_
     return neuron;
 }
 
+void BrainRegion::buildSynapseIndex() {
+    pre_synapse_index_.clear();
+    post_synapse_index_.clear();
+    for (uint32_t i = 0; i < internal_synapses_.size(); ++i) {
+        pre_synapse_index_[internal_synapses_[i].pre_id].push_back(i);
+        post_synapse_index_[internal_synapses_[i].post_id].push_back(i);
+    }
+    index_built_ = true;
+}
+
+static const std::vector<uint32_t> kEmpty;
+
+const std::vector<uint32_t>& BrainRegion::getSynapsesForPreNeuron(uint32_t neuron_id) const {
+    auto it = pre_synapse_index_.find(neuron_id);
+    return (it != pre_synapse_index_.end()) ? it->second : kEmpty;
+}
+
+const std::vector<uint32_t>& BrainRegion::getPostSynapsesForNeuron(uint32_t neuron_id) const {
+    auto it = post_synapse_index_.find(neuron_id);
+    return (it != post_synapse_index_.end()) ? it->second : kEmpty;
+}
+
 } // namespace biobrain
