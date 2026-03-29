@@ -2,13 +2,16 @@
 #include "core/Simulation.h"
 #include "core/BrainRegion.h"
 #include "core/HardwareProfile.h"
+#include "harness/web_dashboard.h"
 #include "core/Neuron.h"
 #include "core/Synapse.h"
 #include "core/IzhikevichNeuron.h"
 #include "compute/ComputeBackend.h"
 #include "plasticity/PlasticityRule.h"
 #include "input/WebcamCapture.h"
+#ifndef NO_QT
 #include "gui/MainWindow.h"
+#endif
 
 #include <sstream>
 #include <algorithm>
@@ -16,12 +19,14 @@
 #include <cmath>
 #include <iomanip>
 
+#ifndef NO_QT
 #include <QPixmap>
 #include <QScreen>
 #include <QGuiApplication>
 #include <QBuffer>
 #include <QByteArray>
 #include <QWidget>
+#endif
 
 using namespace biobrain;
 
@@ -78,10 +83,10 @@ void DebugAPI::recordSpikeBatch(uint32_t region_id, uint32_t count, double sim_t
 
 // ─── Screenshot via Qt ─────────────────────────────────────────────────────────
 std::string DebugAPI::captureScreenshotBase64() {
+#ifndef NO_QT
     if (!window_) return "";
 
     QPixmap pixmap;
-    // Capture the main window widget
     QMetaObject::invokeMethod(window_, [&]() {
         pixmap = window_->grab();
     }, Qt::BlockingQueuedConnection);
@@ -94,92 +99,19 @@ std::string DebugAPI::captureScreenshotBase64() {
     pixmap.save(&buffer, "PNG");
 
     return ba.toBase64().toStdString();
+#else
+    return "";  // No screenshot in headless mode
+#endif
 }
 
 // ─── Route registration ────────────────────────────────────────────────────────
 void DebugAPI::registerRoutes() {
 
-    // ── GET / — debug dashboard ──
+    // ── GET / — full web dashboard ──
     server_.route("/", [](const std::string& path, const std::string&) -> std::string {
         if (path != "/" && path != "/index.html")
             return "{\"error\":\"not found\"}";
-        return R"HTML(<!DOCTYPE html><html><head><title>BioBrain Debug API</title>
-<style>
-body{background:#0d0d1a;color:#e0e0e0;font-family:monospace;padding:20px;max-width:900px;margin:0 auto;}
-a{color:#4af;} h1{color:#f4a;} h2{color:#6bcb77;margin-top:24px;}
-code{color:#4fa;background:#1a1a3a;padding:2px 6px;border-radius:3px;}
-.ep{margin:6px 0;} .cat{opacity:0.6;font-size:12px;}
-pre{background:#12122a;padding:12px;border-radius:8px;overflow-x:auto;}
-#screenshot{max-width:100%;border:1px solid #333;border-radius:8px;margin:12px 0;}
-button{background:#2a2a4a;color:#e0e0e0;border:1px solid #555;padding:6px 16px;border-radius:4px;cursor:pointer;margin:4px;}
-button:hover{background:#3a3a5a;}
-#log{background:#0a0a1a;padding:12px;border-radius:8px;max-height:300px;overflow-y:auto;font-size:12px;}
-</style></head><body>
-<h1>BioBrain Debug API</h1>
-
-<h2>Controls</h2>
-<button onclick="f('/api/sim/start','POST')">Start</button>
-<button onclick="f('/api/sim/pause','POST')">Pause</button>
-<button onclick="f('/api/sim/resume','POST')">Resume</button>
-<button onclick="f('/api/sim/stop','POST')">Stop</button>
-<button onclick="f('/api/sim/inject','POST')">Inject 200 spikes</button>
-<button onclick="loadScreenshot()">Screenshot</button>
-<button onclick="location.reload()">Refresh</button>
-
-<img id="screenshot" style="display:none;">
-
-<h2>Live Status</h2>
-<pre id="status">Loading...</pre>
-
-<h2>Regions</h2>
-<pre id="regions">Loading...</pre>
-
-<h2>Profiling</h2>
-<pre id="profile">Loading...</pre>
-
-<h2>Activity Log</h2>
-<div id="log">Loading...</div>
-
-<h2>Endpoints</h2>
-<div class="cat">Simulation Control</div>
-<div class="ep"><code>GET  /api/sim/status</code> - full simulation state</div>
-<div class="ep"><code>POST /api/sim/start</code> / <code>pause</code> / <code>resume</code> / <code>stop</code></div>
-<div class="ep"><code>POST /api/sim/inject</code> - inject spike burst</div>
-<div class="cat">Inspection</div>
-<div class="ep"><code>GET  /api/regions</code> - all regions with stats</div>
-<div class="ep"><code>GET  /api/region/{id}</code> - detailed region info</div>
-<div class="ep"><code>GET  /api/neuron/{region_id}/{local_idx}</code> - single neuron state</div>
-<div class="ep"><code>GET  /api/synapses/{region_id}?limit=20</code> - synapse dump</div>
-<div class="cat">Profiling</div>
-<div class="ep"><code>GET  /api/profile</code> - step timing stats</div>
-<div class="ep"><code>GET  /api/profile/history?last=100</code> - raw timing samples</div>
-<div class="cat">Activity</div>
-<div class="ep"><code>GET  /api/spikes?last=200</code> - recent spike batches</div>
-<div class="ep"><code>GET  /api/activity</code> - per-region firing rates</div>
-<div class="cat">Debug</div>
-<div class="ep"><code>GET  /api/screenshot</code> - PNG screenshot (base64)</div>
-<div class="ep"><code>GET  /api/webcam/status</code> - camera state</div>
-<div class="ep"><code>GET  /api/memory</code> - memory usage estimate</div>
-
-<script>
-async function f(url,method){
-  method=method||'GET';
-  var r=await fetch(url,{method:method});var j=await r.json();
-  document.getElementById('log').innerHTML='<pre>'+JSON.stringify(j,null,2)+'</pre>'+document.getElementById('log').innerHTML;
-}
-async function loadScreenshot(){
-  var r=await fetch('/api/screenshot');var j=await r.json();
-  if(j.base64){var img=document.getElementById('screenshot');img.src='data:image/png;base64,'+j.base64;img.style.display='block';}
-}
-async function refresh(){
-  try{
-    var r=await fetch('/api/sim/status');document.getElementById('status').textContent=JSON.stringify(await r.json(),null,2);
-    r=await fetch('/api/regions');document.getElementById('regions').textContent=JSON.stringify(await r.json(),null,2);
-    r=await fetch('/api/profile');document.getElementById('profile').textContent=JSON.stringify(await r.json(),null,2);
-  }catch(e){}
-}
-refresh();setInterval(refresh,1000);
-</script></body></html>)HTML";
+        return std::string(WEB_DASHBOARD_HTML);
     });
 
     // ── Simulation control ──
@@ -212,6 +144,82 @@ refresh();setInterval(refresh,1000);
     });
     server_.route("/api/sim/stop", [this](const std::string&, const std::string&) {
         sim_->stop(); return std::string("{\"ok\":true,\"action\":\"stopped\"}");
+    });
+
+    // Restart: stop + rebuild synapse indices + start
+    server_.route("/api/sim/restart", [this](const std::string&, const std::string&) {
+        sim_->stop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        sim_->start();
+        return std::string("{\"ok\":true,\"action\":\"restarted\"}");
+    });
+
+    // Rebuild: stop, rebuild all synapse indices, start fresh
+    server_.route("/api/sim/rebuild", [this](const std::string&, const std::string&) {
+        sim_->stop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        // Rebuild synapse indices for all regions
+        for (auto& r : sim_->regions()) {
+            r->buildSynapseIndex();
+        }
+        sim_->start();
+        std::ostringstream ss;
+        ss << "{\"ok\":true,\"action\":\"rebuilt\",\"regions\":" << sim_->regions().size() << "}";
+        return ss.str();
+    });
+
+    // Config: change region parameters at runtime
+    // POST /api/config/region body: region_id=N&model=izhikevich&plasticity=stdp_da
+    server_.route("/api/config/region", [this](const std::string&, const std::string& body) {
+        // Parse params
+        auto parse = [&body](const std::string& key) -> std::string {
+            auto p = body.find(key + "=");
+            if (p == std::string::npos) return "";
+            auto end = body.find('&', p);
+            return body.substr(p + key.size() + 1,
+                               end == std::string::npos ? end : end - p - key.size() - 1);
+        };
+
+        auto rid_s = parse("region_id");
+        if (rid_s.empty()) return std::string("{\"error\":\"region_id required\"}");
+        uint32_t rid = std::stoi(rid_s);
+
+        auto* region = sim_->getRegion(rid);
+        if (!region) return std::string("{\"error\":\"region not found\"}");
+
+        std::ostringstream changes;
+        changes << "{\"region\":\"" << region->name() << "\",\"changes\":[";
+        bool first = true;
+
+        // Neuron model change
+        auto model_s = parse("model");
+        if (!model_s.empty()) {
+            NeuronModelType model = NeuronModelType::Izhikevich;
+            if (model_s == "hh" || model_s == "hodgkin-huxley") model = NeuronModelType::HodgkinHuxley;
+            else if (model_s == "adex") model = NeuronModelType::AdEx;
+            else if (model_s == "lif") model = NeuronModelType::LIF;
+
+            bool was_running = sim_->isRunning();
+            if (was_running) {
+                sim_->stop();
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            }
+            try {
+                region->setNeuronModel(model);
+                region->buildSynapseIndex();
+            } catch (...) {
+                if (was_running) sim_->start();
+                return std::string("{\"error\":\"model change failed\"}");
+            }
+            if (was_running) sim_->start();
+
+            if (!first) changes << ",";
+            changes << "\"model=" << model_s << "\"";
+            first = false;
+        }
+
+        changes << "],\"ok\":true}";
+        return changes.str();
     });
 
     server_.route("/api/sim/inject", [this](const std::string&, const std::string&) {

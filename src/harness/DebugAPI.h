@@ -9,7 +9,11 @@
 
 namespace biobrain { class Simulation; class BrainRegion; }
 class WebcamCapture;
+#ifndef NO_QT
 class MainWindow;
+#else
+using MainWindow = void;
+#endif
 
 // Debug REST API that attaches to a running BioBrain simulation.
 // Provides profiling, screenshots, real-time inspection, and debugging.

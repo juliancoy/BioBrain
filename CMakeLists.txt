@@ -323,6 +323,42 @@ if(PLATFORM_MACOS)
 endif()
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Headless Mode (web dashboard only, no Qt required)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+add_executable(BioBrainHeadless
+    src/harness/main_headless.cpp
+    src/harness/RestHarness.cpp
+    src/harness/DebugAPI.cpp
+    ${CORE_SOURCES}
+    ${PLASTICITY_SOURCES}
+    ${REGION_SOURCES}
+    src/compute/CPUBackend.cpp
+    src/recording/SpikeRecorder.cpp
+    src/input/RetinalEncoder.cpp
+    ${PLATFORM_INPUT_SOURCES}
+)
+
+target_include_directories(BioBrainHeadless PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_compile_definitions(BioBrainHeadless PRIVATE NO_METAL NO_CUDA NO_QT HEADLESS_MODE)
+
+if(PLATFORM_MACOS)
+    target_link_libraries(BioBrainHeadless PRIVATE
+        ${FOUNDATION_FRAMEWORK} ${AVFOUNDATION_FRAMEWORK}
+        ${COREMEDIA_FRAMEWORK} ${COREVIDEO_FRAMEWORK}
+    )
+endif()
+if(PLATFORM_LINUX)
+    # PulseAudio for audio in headless mode
+    if(PULSE_FOUND)
+        target_include_directories(BioBrainHeadless PRIVATE ${PULSE_INCLUDE_DIRS})
+        target_link_libraries(BioBrainHeadless PRIVATE ${PULSE_LIBRARIES})
+    endif()
+endif()
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════════════════════════════════════
 
