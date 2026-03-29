@@ -38,6 +38,10 @@ public:
     double c = -65.0;  // after-spike reset value of v (mV)
     double d = 8.0;    // after-spike reset increment of u
 
+    // Direct state access for Metal GPU backend writeback
+    void setVoltage(double v) { v_ = v; }
+    void setRecovery(double u) { u_ = u; }
+
 private:
     double v_ = -65.0; // membrane potential (mV)
     double u_ = 0.0;   // recovery variable

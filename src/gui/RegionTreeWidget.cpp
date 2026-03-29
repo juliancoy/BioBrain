@@ -1,5 +1,6 @@
 #include "RegionTreeWidget.h"
 #include "core/BrainRegion.h"
+#include "compute/ComputeBackend.h"
 
 #include <QHeaderView>
 

@@ -86,15 +86,15 @@ UpdateResult MetalBackend::updateNeurons(BrainRegion& region, double dt,
         auto* states = static_cast<MetalIzhikevichState*>([neuronBuffer contents]);
 
         for (size_t i = 0; i < count; ++i) {
-            auto* n = dynamic_cast<IzhikevichNeuron*>(neurons[i].get());
+            auto* n = dynamic_cast<biobrain::IzhikevichNeuron*>(neurons[i].get());
             if (!n) continue;
 
             states[i].v = static_cast<float>(n->voltage());
             states[i].u = static_cast<float>(n->recoveryVariable());
-            states[i].a = static_cast<float>(n->paramA());
-            states[i].b = static_cast<float>(n->paramB());
-            states[i].c = static_cast<float>(n->paramC());
-            states[i].d = static_cast<float>(n->paramD());
+            states[i].a = static_cast<float>(n->a);
+            states[i].b = static_cast<float>(n->b);
+            states[i].c = static_cast<float>(n->c);
+            states[i].d = static_cast<float>(n->d);
             states[i].I_syn = (i < I_syn.size()) ? static_cast<float>(I_syn[i]) : 0.0f;
             states[i].spiked = 0;
         }
@@ -133,7 +133,7 @@ UpdateResult MetalBackend::updateNeurons(BrainRegion& region, double dt,
                 result.spike_times.push_back(sim_time);
             }
             // Write state back to CPU neuron objects
-            auto* n = dynamic_cast<IzhikevichNeuron*>(neurons[i].get());
+            auto* n = dynamic_cast<biobrain::IzhikevichNeuron*>(neurons[i].get());
             if (n) {
                 n->setVoltage(states[i].v);
                 n->setRecovery(states[i].u);

@@ -24,36 +24,52 @@ find_library(COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
 # Users should place qcustomplot.h/cpp in thirdparty/qcustomplot/
 set(QCUSTOMPLOT_DIR ${CMAKE_SOURCE_DIR}/thirdparty/qcustomplot)
 
-# --- Metal Shader Compilation ---
+# --- Metal Shader Compilation (optional — requires full Xcode) ---
 
-set(METAL_SHADERS
-    src/metal/izhikevich.metal
-    src/metal/hodgkin_huxley.metal
-    src/metal/adex.metal
-    src/metal/synapse_update.metal
+execute_process(
+    COMMAND xcrun -sdk macosx --find metal
+    RESULT_VARIABLE METAL_COMPILER_RESULT
+    OUTPUT_QUIET ERROR_QUIET
 )
 
-set(METAL_AIR_FILES)
-foreach(SHADER ${METAL_SHADERS})
-    get_filename_component(SHADER_NAME ${SHADER} NAME_WE)
-    set(AIR_FILE ${CMAKE_BINARY_DIR}/${SHADER_NAME}.air)
-    add_custom_command(
-        OUTPUT ${AIR_FILE}
-        COMMAND xcrun -sdk macosx metal -c ${CMAKE_SOURCE_DIR}/${SHADER} -o ${AIR_FILE}
-        DEPENDS ${CMAKE_SOURCE_DIR}/${SHADER}
-        COMMENT "Compiling Metal shader: ${SHADER_NAME}"
+if(METAL_COMPILER_RESULT EQUAL 0)
+    set(HAS_METAL_COMPILER TRUE)
+    message(STATUS "Metal shader compiler found — GPU acceleration enabled")
+
+    set(METAL_SHADERS
+        src/metal/izhikevich.metal
+        src/metal/hodgkin_huxley.metal
+        src/metal/adex.metal
+        src/metal/synapse_update.metal
     )
-    list(APPEND METAL_AIR_FILES ${AIR_FILE})
-endforeach()
 
-set(METALLIB_FILE ${CMAKE_BINARY_DIR}/BioBrain.metallib)
-add_custom_command(
-    OUTPUT ${METALLIB_FILE}
-    COMMAND xcrun -sdk macosx metallib ${METAL_AIR_FILES} -o ${METALLIB_FILE}
-    DEPENDS ${METAL_AIR_FILES}
-    COMMENT "Linking Metal shader library"
-)
-add_custom_target(MetalShaders DEPENDS ${METALLIB_FILE})
+    set(METAL_AIR_FILES)
+    foreach(SHADER ${METAL_SHADERS})
+        get_filename_component(SHADER_NAME ${SHADER} NAME_WE)
+        set(AIR_FILE ${CMAKE_BINARY_DIR}/${SHADER_NAME}.air)
+        add_custom_command(
+            OUTPUT ${AIR_FILE}
+            COMMAND xcrun -sdk macosx metal -c ${CMAKE_SOURCE_DIR}/${SHADER} -o ${AIR_FILE}
+            DEPENDS ${CMAKE_SOURCE_DIR}/${SHADER}
+            COMMENT "Compiling Metal shader: ${SHADER_NAME}"
+        )
+        list(APPEND METAL_AIR_FILES ${AIR_FILE})
+    endforeach()
+
+    set(METALLIB_FILE ${CMAKE_BINARY_DIR}/BioBrain.metallib)
+    add_custom_command(
+        OUTPUT ${METALLIB_FILE}
+        COMMAND xcrun -sdk macosx metallib ${METAL_AIR_FILES} -o ${METALLIB_FILE}
+        DEPENDS ${METAL_AIR_FILES}
+        COMMENT "Linking Metal shader library"
+    )
+    add_custom_target(MetalShaders DEPENDS ${METALLIB_FILE})
+else()
+    set(HAS_METAL_COMPILER FALSE)
+    message(WARNING "Metal shader compiler not found (install Xcode for GPU acceleration). Building CPU-only.")
+    add_compile_definitions(NO_METAL)
+    add_custom_target(MetalShaders)  # no-op target
+endif()
 
 # --- Sources ---
 
@@ -154,11 +170,13 @@ target_link_libraries(BioBrain PRIVATE
     ${COREVIDEO_FRAMEWORK}
 )
 
-# Copy metallib to build directory
-add_custom_command(TARGET BioBrain POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${METALLIB_FILE} $<TARGET_FILE_DIR:BioBrain>/BioBrain.metallib
-    COMMENT "Copying Metal shader library to output directory"
-)
+# Copy metallib to build directory (only if Metal compiler available)
+if(HAS_METAL_COMPILER)
+    add_custom_command(TARGET BioBrain POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy ${METALLIB_FILE} $<TARGET_FILE_DIR:BioBrain>/BioBrain.metallib
+        COMMENT "Copying Metal shader library to output directory"
+    )
+endif()
 
 # --- REST Test Harness (no Qt, no HDF5, no Metal required) ---
 
