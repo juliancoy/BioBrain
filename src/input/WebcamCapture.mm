@@ -144,6 +144,7 @@ WebcamCapture::~WebcamCapture() {
 
 bool WebcamCapture::start() {
     @autoreleasepool {
+        @try {
         if (running_.load()) {
             return true;  // Already running
         }
@@ -240,13 +241,33 @@ bool WebcamCapture::start() {
         }
         [impl_->session addInput:impl_->input];
 
-        // --- Configure frame rate ---
-        [device lockForConfiguration:&error];
-        if (!error) {
-            CMTime frameDuration = CMTimeMake(1, target_fps_);
-            device.activeVideoMinFrameDuration = frameDuration;
-            device.activeVideoMaxFrameDuration = frameDuration;
-            [device unlockForConfiguration];
+        // --- Configure frame rate (best-effort, skip if device doesn't support it) ---
+        @try {
+            [device lockForConfiguration:&error];
+            if (!error) {
+                float bestRate = 0;
+                for (AVFrameRateRange* range in device.activeFormat.videoSupportedFrameRateRanges) {
+                    if (range.maxFrameRate >= target_fps_ && range.minFrameRate <= target_fps_) {
+                        bestRate = target_fps_;
+                        break;
+                    }
+                    if (range.maxFrameRate > bestRate) {
+                        bestRate = range.maxFrameRate;
+                    }
+                }
+                if (bestRate > 0) {
+                    CMTime frameDuration = CMTimeMake(1, static_cast<int32_t>(bestRate));
+                    device.activeVideoMinFrameDuration = frameDuration;
+                    device.activeVideoMaxFrameDuration = frameDuration;
+                    NSLog(@"BioBrain: Set frame rate to %.1f fps", bestRate);
+                } else {
+                    NSLog(@"BioBrain: Using device default frame rate");
+                }
+                [device unlockForConfiguration];
+            }
+        } @catch (NSException* e) {
+            NSLog(@"BioBrain: Frame rate config failed (%@), using default", e.reason);
+            @try { [device unlockForConfiguration]; } @catch (NSException*) {}
         }
 
         // --- Output ---
@@ -285,6 +306,20 @@ bool WebcamCapture::start() {
         NSLog(@"BioBrain: Webcam capture started successfully (%dx%d @ %d fps)",
               target_width_, target_height_, target_fps_);
         return true;
+
+        } @catch (NSException* exception) {
+            NSLog(@"BioBrain: Camera start failed with exception: %@ - %@",
+                  exception.name, exception.reason);
+            // Clean up partial state
+            if (impl_->delegate) impl_->delegate.owner = nullptr;
+            impl_->delegate = nil;
+            impl_->session = nil;
+            impl_->input = nil;
+            impl_->output = nil;
+            impl_->queue = nil;
+            running_.store(false);
+            return false;
+        }
     }
 }
 
@@ -307,12 +342,9 @@ void WebcamCapture::stop() {
             [impl_->session stopRunning];
         }
 
-        // 4. Drain the dispatch queue to ensure no callbacks are in-flight
-        if (impl_->queue) {
-            dispatch_sync(impl_->queue, ^{
-                // Barrier: all pending delegate callbacks have completed
-            });
-        }
+        // 4. Wait briefly for in-flight callbacks to complete
+        // (dispatch_sync can deadlock if called from the same queue)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // 5. Now safe to tear down
         if (impl_->input && impl_->session) {

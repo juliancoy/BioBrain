@@ -507,6 +507,94 @@ refresh();setInterval(refresh,1000);
         return ss.str();
     });
 
+    // ── List cameras ──
+
+    server_.route("/api/webcam/cameras", [this](const std::string&, const std::string&) {
+        auto cameras = WebcamCapture::listCameras();
+        std::string current = webcam_ ? webcam_->selectedCamera() : "";
+        std::ostringstream ss;
+        ss << "{\"current\":" << (current.empty() ? "null" : ("\"" + current + "\""))
+           << ",\"cameras\":[";
+        bool first = true;
+        for (auto& cam : cameras) {
+            if (!first) ss << ",";
+            ss << "{" << jStr("id", cam.device_id) << ","
+               << jStr("name", cam.name) << ","
+               << jBool("active", cam.device_id == current) << "}";
+            first = false;
+        }
+        ss << "]}";
+        return ss.str();
+    });
+
+    // ── Switch camera ──
+
+    server_.route("/api/webcam/switch", [this](const std::string& path, const std::string& body) {
+        // Accept device_id from query string or body
+        std::string device_id;
+
+        // Check query string: /api/webcam/switch?id=xxx
+        auto qpos = path.find("id=");
+        if (qpos != std::string::npos) {
+            auto end = path.find('&', qpos);
+            device_id = path.substr(qpos + 3, end == std::string::npos ? end : end - qpos - 3);
+        }
+        // Check body: id=xxx
+        if (device_id.empty()) {
+            auto bpos = body.find("id=");
+            if (bpos != std::string::npos) {
+                auto end = body.find('&', bpos);
+                device_id = body.substr(bpos + 3, end == std::string::npos ? end : end - bpos - 3);
+            }
+        }
+        // Also accept bare body as device_id
+        if (device_id.empty() && !body.empty() && body.find('=') == std::string::npos) {
+            device_id = body;
+        }
+
+        if (device_id.empty()) {
+            return std::string("{\"error\":\"Provide camera id via ?id=DEVICE_ID or POST body\"}");
+        }
+
+        if (!webcam_) {
+            return std::string("{\"error\":\"No webcam instance\"}");
+        }
+
+        // Verify the device_id exists
+        auto cameras = WebcamCapture::listCameras();
+        std::string cam_name;
+        bool found = false;
+        for (auto& cam : cameras) {
+            if (cam.device_id == device_id) {
+                cam_name = cam.name;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return std::string("{\"error\":\"Camera not found\",\"device_id\":\"" + device_id + "\"}");
+        }
+
+        // Stop current, switch, restart — wrapped for safety
+        bool ok = false;
+        try {
+            webcam_->stop();
+            std::this_thread::sleep_for(std::chrono::milliseconds(800));
+            webcam_->selectCamera(device_id);
+            ok = webcam_->start();
+        } catch (const std::exception& e) {
+            return std::string("{\"error\":\"Switch failed: ") + e.what() + "\"}";
+        } catch (...) {
+            return std::string("{\"error\":\"Switch failed with unknown exception\"}");
+        }
+
+        std::ostringstream ss;
+        ss << "{" << jBool("ok", ok) << ","
+           << jStr("camera", cam_name) << ","
+           << jStr("device_id", device_id) << "}";
+        return ss.str();
+    });
+
     // ── Memory estimate ──
 
     server_.route("/api/memory", [this](const std::string&, const std::string&) {
