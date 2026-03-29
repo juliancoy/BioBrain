@@ -37,6 +37,7 @@
 // GUI
 #include "gui/MainWindow.h"
 #include "gui/WebcamWidget.h"
+#include "gui/WebcamPanel.h"
 #include "gui/SpikeRasterWidget.h"
 
 // Debug API
@@ -129,6 +130,10 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
+    // Log to file for crash debugging
+    freopen("/tmp/biobrain.log", "w", stderr);
+    std::cerr << "BioBrain starting...\n";
+
     QApplication app(argc, argv);
     app.setApplicationName("BioBrain");
     app.setApplicationVersion("0.1.0");
@@ -153,6 +158,23 @@ int main(int argc, char* argv[]) {
     mainWindow->setWindowTitle("BioBrain — Neural Simulation Dashboard");
     mainWindow->resize(1400, 900);
     mainWindow->show();
+
+    // Wire camera switch handler
+    auto* webcamPtr = webcam.get();
+    auto* panelPtr = mainWindow->webcamPanel();
+    if (panelPtr) {
+        QObject::connect(panelPtr, &WebcamPanel::cameraChanged,
+            [webcamPtr](const QString& deviceId) {
+                std::cerr << "Switching camera to: " << deviceId.toStdString() << "\n";
+                webcamPtr->stop();
+                QTimer::singleShot(500, [webcamPtr, deviceId]() {
+                    webcamPtr->selectCamera(deviceId.toStdString());
+                    if (webcamPtr->start()) {
+                        std::cerr << "Camera switched successfully\n";
+                    }
+                });
+            });
+    }
 
     // Wire webcam → retinal encoder → simulation AND → GUI webcam widget
     auto* encoderPtr = encoder.get();
@@ -192,13 +214,27 @@ int main(int argc, char* argv[]) {
         sim->injectSpikes(events);
     });
 
-    // Start webcam after event loop is running (so permission dialog can display)
-    auto* webcamRaw = webcam.get();
-    QTimer::singleShot(500, [webcamRaw]() {
-        if (webcamRaw->start()) {
+    // Start webcam after event loop is running (so permission dialog can display).
+    // Then populate the camera list once we know permission status.
+    QTimer::singleShot(500, [webcamPtr, panelPtr]() {
+        bool started = webcamPtr->start();
+        if (started) {
             std::cerr << "Webcam started (640x480 @ 30fps)\n";
         } else {
-            std::cerr << "WARNING: Could not start webcam. Check System Settings > Privacy > Camera.\n";
+            std::cerr << "WARNING: Could not start webcam. If permission dialog appeared, "
+                         "it will auto-retry. Otherwise check System Settings > Privacy > Camera.\n";
+        }
+
+        // Populate camera list (works regardless of permission for listing)
+        auto cameras = WebcamCapture::listCameras();
+        std::cerr << "Found " << cameras.size() << " camera(s)\n";
+        if (panelPtr) {
+            std::vector<WebcamPanel::CameraEntry> entries;
+            for (auto& cam : cameras) {
+                std::cerr << "  Camera: " << cam.name << " [" << cam.device_id << "]\n";
+                entries.push_back({cam.device_id, cam.name});
+            }
+            panelPtr->setCameras(entries);
         }
     });
 

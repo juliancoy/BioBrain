@@ -97,6 +97,39 @@ struct WebcamCapture::Impl {
 // WebcamCapture implementation
 // ---------------------------------------------------------------------------
 
+std::vector<CameraInfo> WebcamCapture::listCameras() {
+    std::vector<CameraInfo> result;
+    @autoreleasepool {
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 140000
+        AVCaptureDeviceDiscoverySession* discovery =
+            [AVCaptureDeviceDiscoverySession
+                discoverySessionWithDeviceTypes:@[AVCaptureDeviceTypeBuiltInWideAngleCamera,
+                                                  AVCaptureDeviceTypeExternal]
+                                      mediaType:AVMediaTypeVideo
+                                       position:AVCaptureDevicePositionUnspecified];
+        for (AVCaptureDevice* dev in discovery.devices) {
+            CameraInfo info;
+            info.device_id = [dev.uniqueID UTF8String];
+            info.name = [dev.localizedName UTF8String];
+            result.push_back(info);
+        }
+#else
+        NSArray* devices = [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo];
+        for (AVCaptureDevice* dev in devices) {
+            CameraInfo info;
+            info.device_id = [dev.uniqueID UTF8String];
+            info.name = [dev.localizedName UTF8String];
+            result.push_back(info);
+        }
+#endif
+    }
+    return result;
+}
+
+void WebcamCapture::selectCamera(const std::string& device_id) {
+    selected_device_id_ = device_id;
+}
+
 WebcamCapture::WebcamCapture(int width, int height, int fps)
     : impl_(std::make_unique<Impl>())
     , target_width_(width)
@@ -152,9 +185,26 @@ bool WebcamCapture::start() {
                                       mediaType:AVMediaTypeVideo
                                        position:AVCaptureDevicePositionUnspecified];
         NSLog(@"BioBrain: Found %lu camera(s)", (unsigned long)discovery.devices.count);
-        if (discovery.devices.count > 0) {
+
+        // Use selected camera if specified, otherwise default to first
+        if (!selected_device_id_.empty()) {
+            NSString* targetId = [NSString stringWithUTF8String:selected_device_id_.c_str()];
+            for (AVCaptureDevice* dev in discovery.devices) {
+                if ([dev.uniqueID isEqualToString:targetId]) {
+                    device = dev;
+                    break;
+                }
+            }
+            if (!device) {
+                NSLog(@"BioBrain: Selected camera '%s' not found, falling back to default",
+                      selected_device_id_.c_str());
+            }
+        }
+        if (!device && discovery.devices.count > 0) {
             device = discovery.devices.firstObject;
-            NSLog(@"BioBrain: Using camera: %@", device.localizedName);
+        }
+        if (device) {
+            NSLog(@"BioBrain: Using camera: %@ (%@)", device.localizedName, device.uniqueID);
         }
 #else
         device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
@@ -243,26 +293,42 @@ void WebcamCapture::stop() {
         if (!running_.load()) {
             return;
         }
+
+        // 1. Null out delegate owner FIRST to prevent in-flight callbacks
+        if (impl_->delegate) {
+            impl_->delegate.owner = nullptr;
+        }
+
+        // 2. Mark as not running (delegate checks this too)
         running_.store(false, std::memory_order_release);
 
+        // 3. Stop the session
         if (impl_->session && [impl_->session isRunning]) {
             [impl_->session stopRunning];
         }
 
-        // Remove inputs/outputs
-        if (impl_->input) {
+        // 4. Drain the dispatch queue to ensure no callbacks are in-flight
+        if (impl_->queue) {
+            dispatch_sync(impl_->queue, ^{
+                // Barrier: all pending delegate callbacks have completed
+            });
+        }
+
+        // 5. Now safe to tear down
+        if (impl_->input && impl_->session) {
             [impl_->session removeInput:impl_->input];
             impl_->input = nil;
         }
-        if (impl_->output) {
+        if (impl_->output && impl_->session) {
             [impl_->session removeOutput:impl_->output];
             impl_->output = nil;
         }
 
-        impl_->delegate.owner = nullptr;
         impl_->delegate = nil;
         impl_->session = nil;
         impl_->queue = nil;
+
+        NSLog(@"BioBrain: Webcam capture stopped");
     }
 }
 

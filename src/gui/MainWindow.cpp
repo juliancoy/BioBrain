@@ -3,6 +3,7 @@
 #include "SpikeRasterWidget.h"
 #include "ActivityMapWidget.h"
 #include "WebcamWidget.h"
+#include "WebcamPanel.h"
 #include "BackendConfigPanel.h"
 
 #include "core/Simulation.h"
@@ -159,8 +160,8 @@ void MainWindow::setupDocks()
     {
         auto* dock = new QDockWidget(tr("Webcam Feed"), this);
         dock->setObjectName("WebcamDock");
-        webcamView_ = new WebcamWidget(dock);
-        dock->setWidget(webcamView_);
+        webcamPanel_ = new WebcamPanel(dock);
+        dock->setWidget(webcamPanel_);
         addDockWidget(Qt::BottomDockWidgetArea, dock);
         viewMenu->addAction(dock->toggleViewAction());
     }
@@ -299,4 +300,8 @@ void MainWindow::applyDarkTheme()
         }
         QCheckBox::indicator:checked { background: #4af; }
     )");
+}
+
+WebcamWidget* MainWindow::webcamWidget() const {
+    return webcamPanel_ ? webcamPanel_->webcamWidget() : nullptr;
 }

@@ -11,6 +11,7 @@ class RegionTreeWidget;
 class SpikeRasterWidget;
 class ActivityMapWidget;
 class WebcamWidget;
+class WebcamPanel;
 class BackendConfigPanel;
 
 class MainWindow : public QMainWindow {
@@ -21,7 +22,8 @@ public:
     ~MainWindow() override;
 
     // Access webcam widget for external frame delivery
-    WebcamWidget* webcamWidget() const { return webcamView_; }
+    WebcamWidget* webcamWidget() const;
+    WebcamPanel* webcamPanel() const { return webcamPanel_; }
 
 private slots:
     void onRun();
@@ -42,7 +44,7 @@ private:
     RegionTreeWidget*   regionTree_   = nullptr;
     SpikeRasterWidget*  spikeRaster_  = nullptr;
     ActivityMapWidget*  activityMap_  = nullptr;
-    WebcamWidget*       webcamView_   = nullptr;
+    WebcamPanel*        webcamPanel_  = nullptr;
     BackendConfigPanel* configPanel_  = nullptr;
 
     QTimer* statusTimer_ = nullptr;

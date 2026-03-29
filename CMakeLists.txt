@@ -3,6 +3,14 @@ project(BioBrain VERSION 0.1.0 LANGUAGES CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Address Sanitizer for debug builds
+option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+if(ENABLE_ASAN)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+    message(STATUS "AddressSanitizer ENABLED")
+endif()
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
@@ -117,6 +125,7 @@ set(GUI_SOURCES
     src/gui/SpikeRasterWidget.cpp
     src/gui/ActivityMapWidget.cpp
     src/gui/WebcamWidget.cpp
+    src/gui/WebcamPanel.cpp
     src/gui/BackendConfigPanel.cpp
     src/gui/NeuronParamEditor.cpp
 )

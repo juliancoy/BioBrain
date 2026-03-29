@@ -14,10 +14,24 @@ struct FrameData {
     double timestamp = 0.0;       // ms since capture start
 };
 
+struct CameraInfo {
+    std::string device_id;   // unique AVCaptureDevice ID
+    std::string name;        // human-readable name (e.g., "FaceTime HD Camera")
+};
+
 class WebcamCapture {
 public:
     WebcamCapture(int width = 640, int height = 480, int fps = 30);
     ~WebcamCapture();
+
+    // List available cameras (can be called before start)
+    static std::vector<CameraInfo> listCameras();
+
+    // Select a camera by device_id (empty = default). Call before start().
+    void selectCamera(const std::string& device_id);
+
+    // Currently selected camera ID (empty = default)
+    const std::string& selectedCamera() const { return selected_device_id_; }
 
     bool start();
     void stop();
@@ -39,6 +53,7 @@ private:
     int target_width_;
     int target_height_;
     int target_fps_;
+    std::string selected_device_id_;
 
     mutable std::mutex frame_mutex_;
     FrameData latest_frame_;
