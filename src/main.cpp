@@ -30,6 +30,11 @@
 #include "regions/VTA.h"
 #include "regions/Striatum.h"
 #include "regions/MotorCortex.h"
+#include "regions/WernickesArea.h"
+#include "regions/BrocasArea.h"
+
+// Audio
+#include "audio/VocalSynthesizer.h"
 
 // Recording
 #include "recording/SpikeRecorder.h"
@@ -108,9 +113,39 @@ static std::shared_ptr<Simulation> buildBrain() {
     motor->setComputeBackend(rlBackend);
     offset += MotorCortex::NEURON_COUNT;
 
-    std::cout << "BioBrain: " << offset << " total neurons across 8 regions\n";
-    std::cout << "  Compute: " << (metal->isAvailable() ? "Metal GPU" : "CPU-only")
-              << " for visual cortex, CPU for RL loop\n";
+    // Language circuit: IT → Wernicke's → Broca's → vocal output
+    auto wernicke = WernickesArea::create(offset);
+    wernicke->setComputeBackend(rlBackend);
+    wernicke->setPlasticityRule(plasticity);
+    offset += WernickesArea::NEURON_COUNT;
+
+    auto broca = BrocasArea::create(offset);
+    broca->setComputeBackend(rlBackend);
+    broca->setPlasticityRule(plasticity);
+    offset += BrocasArea::NEURON_COUNT;
+
+    // Wire IT cortex → Wernicke's area (ventral "what" stream → language comprehension)
+    {
+        std::vector<Synapse> it_to_wernicke;
+        std::mt19937 rng(42);
+        uint32_t it_base = it->baseNeuronId();
+        std::uniform_int_distribution<uint32_t> wdist(0, WernickesArea::EXCITATORY - 1);
+        // Each IT excitatory neuron projects to ~3 Wernicke's neurons
+        for (uint32_t i = 0; i < 24000; i += 3) {  // IT has 24K excitatory
+            uint32_t pre = it_base + i;
+            for (int j = 0; j < 3; ++j) {
+                uint32_t post = wdist(rng);  // local index in Wernicke's
+                SynapseParams p{0.3, 6.0, ReceptorType::AMPA, true};  // myelinated
+                it_to_wernicke.emplace_back(pre, post, p);
+            }
+        }
+        it->addProjection(WernickesArea::REGION_ID, std::move(it_to_wernicke));
+    }
+
+    std::cerr << "BioBrain: " << offset << " total neurons across 10 regions\n";
+    std::cerr << "  Language circuit: IT → Wernicke's → Broca's → Audio\n";
+    std::cerr << "  Compute: " << (metal->isAvailable() ? "Metal GPU" : "CPU-only")
+              << " for visual cortex, CPU for RL + language\n";
 
     // Add all regions to simulation
     sim->addRegion(retina);
@@ -121,6 +156,8 @@ static std::shared_ptr<Simulation> buildBrain() {
     sim->addRegion(vta);
     sim->addRegion(striatum);
     sim->addRegion(motor);
+    sim->addRegion(wernicke);
+    sim->addRegion(broca);
 
     return sim;
 }
@@ -261,7 +298,54 @@ int main(int argc, char* argv[]) {
         });
 
     debugApi->start();
-    std::cout << "Debug API: http://localhost:9090\n";
+    std::cerr << "Debug API: http://localhost:9090\n";
+
+    // ── Vocal Synthesizer: Broca's area output → audio ──
+    auto vocalSynth = std::make_unique<VocalSynthesizer>();
+    if (vocalSynth->start()) {
+        std::cerr << "Vocal synthesizer started (44.1kHz)\n";
+    } else {
+        std::cerr << "WARNING: Could not start vocal synthesizer\n";
+    }
+
+    // Periodically read Broca's area output pools and drive the synthesizer.
+    // Runs at 60Hz on the main thread (fast enough for smooth audio changes).
+    auto* synthPtr = vocalSynth.get();
+    auto simWeakSynth = std::weak_ptr<Simulation>(simulation);
+    QTimer synthTimer;
+    QObject::connect(&synthTimer, &QTimer::timeout, [synthPtr, simWeakSynth]() {
+        auto sim = simWeakSynth.lock();
+        if (!sim || !sim->isRunning() || !synthPtr->isRunning()) return;
+
+        // Find Broca's area (region ID 9)
+        auto* broca = sim->getRegion(BrocasArea::REGION_ID);
+        if (!broca) return;
+
+        // Read firing rates from each output pool
+        // Pool = 500 consecutive neurons, count spikes in last 50ms window
+        auto& neurons = broca->neurons();
+        double t = broca->currentTime();
+        std::array<double, 6> pool_rates{};
+
+        for (uint32_t pool = 0; pool < BrocasArea::OUTPUT_POOLS; ++pool) {
+            uint32_t start = pool * BrocasArea::POOL_SIZE;
+            uint32_t end = start + BrocasArea::POOL_SIZE;
+            if (end > neurons.size()) end = neurons.size();
+
+            uint32_t spike_count = 0;
+            for (uint32_t i = start; i < end; ++i) {
+                // Count neurons that spiked recently (within 50ms)
+                if (neurons[i]->last_spike_time > t - 50.0) {
+                    spike_count++;
+                }
+            }
+            // Convert to firing rate (Hz): spikes / (pool_size * window_sec)
+            pool_rates[pool] = spike_count / (BrocasArea::POOL_SIZE * 0.05);
+        }
+
+        synthPtr->updateFromPoolRates(pool_rates);
+    });
+    synthTimer.start(16);  // ~60Hz
 
     // Auto-start the simulation
     simulation->start();
@@ -310,6 +394,7 @@ int main(int argc, char* argv[]) {
     int result = app.exec();
 
     // Cleanup
+    vocalSynth->stop();
     debugApi->stop();
     simulation->stop();
     recorder->stop();

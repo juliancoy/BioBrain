@@ -27,6 +27,8 @@ find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
 find_library(AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
 find_library(COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
 find_library(COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
+find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+find_library(AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
 
 # QCustomPlot (header-only or built from source)
 # Users should place qcustomplot.h/cpp in thirdparty/qcustomplot/
@@ -112,6 +114,12 @@ set(REGION_SOURCES
     src/regions/VTA.cpp
     src/regions/Striatum.cpp
     src/regions/MotorCortex.cpp
+    src/regions/WernickesArea.cpp
+    src/regions/BrocasArea.cpp
+)
+
+set(AUDIO_SOURCES
+    src/audio/VocalSynthesizer.mm
 )
 
 set(COMPUTE_SOURCES
@@ -161,6 +169,7 @@ add_executable(BioBrain
     ${COMPUTE_SOURCES}
     ${GUI_SOURCES}
     ${RECORDING_SOURCES}
+    ${AUDIO_SOURCES}
     ${HARNESS_API_SOURCES}
     ${QCUSTOMPLOT_SOURCES}
 )
@@ -191,6 +200,8 @@ target_link_libraries(BioBrain PRIVATE
     ${AVFOUNDATION_FRAMEWORK}
     ${COREMEDIA_FRAMEWORK}
     ${COREVIDEO_FRAMEWORK}
+    ${AUDIOTOOLBOX_FRAMEWORK}
+    ${AUDIOUNIT_FRAMEWORK}
 )
 
 # Copy metallib to build directory (only if Metal compiler available)

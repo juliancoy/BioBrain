@@ -343,8 +343,7 @@ void WebcamCapture::stop() {
         }
 
         // 4. Wait briefly for in-flight callbacks to complete
-        // (dispatch_sync can deadlock if called from the same queue)
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        [NSThread sleepForTimeInterval:0.1];
 
         // 5. Now safe to tear down
         if (impl_->input && impl_->session) {
