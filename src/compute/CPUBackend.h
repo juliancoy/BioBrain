@@ -10,7 +10,7 @@ public:
     ~CPUBackend() override = default;
 
     UpdateResult updateNeurons(BrainRegion& region, double dt,
-                               std::span<const double> I_syn) override;
+                               Span<const double> I_syn) override;
 
     const char* name() const override { return "CPU Event-Driven"; }
 

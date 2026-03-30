@@ -18,7 +18,7 @@ public:
     ~MetalBackend() override;
 
     UpdateResult updateNeurons(BrainRegion& region, double dt,
-                               std::span<const double> I_syn) override;
+                               Span<const double> I_syn) override;
 
     const char* name() const override { return "Metal GPU Batch"; }
 

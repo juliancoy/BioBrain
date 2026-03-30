@@ -66,7 +66,7 @@ MetalBackend::MetalBackend() : impl_(std::make_unique<Impl>()) {
 MetalBackend::~MetalBackend() = default;
 
 UpdateResult MetalBackend::updateNeurons(BrainRegion& region, double dt,
-                                          std::span<const double> I_syn) {
+                                          Span<const double> I_syn) {
     UpdateResult result;
 
     if (!available_ || !impl_->izhikevichPipeline) {

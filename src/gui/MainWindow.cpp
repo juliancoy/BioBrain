@@ -268,6 +268,10 @@ void MainWindow::applyDarkTheme()
             background: #1a1a3a; color: #fff; border: 1px solid #444;
             padding: 2px 6px;
         }
+        QComboBox QAbstractItemView {
+            background: #1a1a3a; color: #e0e0e0; border: 1px solid #444;
+            selection-background-color: #4af; selection-color: #000;
+        }
         QPushButton {
             background: #2a2a4a; color: #e0e0e0; border: 1px solid #444;
             padding: 4px 12px;

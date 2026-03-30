@@ -25,15 +25,28 @@ void BackendConfigPanel::setupUI()
 
     neuronModelCombo_ = new QComboBox(this);
     neuronModelCombo_->addItems({"Izhikevich", "Hodgkin-Huxley", "AdEx", "LIF"});
+    neuronModelCombo_->setMaximumWidth(200);
     modelLayout->addRow("Model:", neuronModelCombo_);
 
     computeBackendCombo_ = new QComboBox(this);
+    computeBackendCombo_->setMaximumWidth(200);
+#ifdef __APPLE__
     computeBackendCombo_->addItems({
         "CPU Event-Driven", "Metal GPU Batch", "Hybrid (auto)"
     });
+#elif defined(__linux__)
+    computeBackendCombo_->addItems({
+        "CPU Event-Driven", "CUDA GPU Batch", "Hybrid (auto)"
+    });
+#else
+    computeBackendCombo_->addItems({
+        "CPU Event-Driven", "Hybrid (auto)"
+    });
+#endif
     modelLayout->addRow("Compute:", computeBackendCombo_);
 
     plasticityCombo_ = new QComboBox(this);
+    plasticityCombo_->setMaximumWidth(200);
     plasticityCombo_->addItems({
         "STDP + Dopamine (3-factor)",
         "STDP (Hebbian only)",

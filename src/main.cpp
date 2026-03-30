@@ -12,7 +12,12 @@
 
 // Compute backends
 #include "compute/CPUBackend.h"
+#ifdef __APPLE__
 #include "compute/MetalBackend.h"
+#endif
+#ifdef PLATFORM_LINUX
+#include "compute/CUDABackend.h"
+#endif
 
 // Plasticity
 #include "plasticity/DopamineSTDP.h"
@@ -65,12 +70,20 @@ static std::shared_ptr<Simulation> buildBrain(const HardwareProfile& hw) {
 
     // Create compute backends
     auto cpu = std::make_shared<CPUBackend>(hw.cpu_sim_threads);
+    
+    // Use platform-specific GPU backend for large visual cortex regions
+    std::shared_ptr<ComputeBackend> visualBackend = cpu;
+#ifdef __APPLE__
     auto metal = std::make_shared<MetalBackend>();
-
-    // Use Metal for large visual cortex regions, CPU for smaller RL regions
-    auto visualBackend = metal->isAvailable()
-        ? std::static_pointer_cast<ComputeBackend>(metal)
-        : std::static_pointer_cast<ComputeBackend>(cpu);
+    if (metal->isAvailable()) {
+        visualBackend = std::static_pointer_cast<ComputeBackend>(metal);
+    }
+#elif defined(PLATFORM_LINUX) && !defined(NO_CUDA)
+    auto cuda = std::make_shared<CUDABackend>();
+    if (cuda->isAvailable()) {
+        visualBackend = std::static_pointer_cast<ComputeBackend>(cuda);
+    }
+#endif
     auto rlBackend = cpu;
 
     // Create plasticity rule (STDP + Dopamine for all regions)
@@ -150,7 +163,13 @@ static std::shared_ptr<Simulation> buildBrain(const HardwareProfile& hw) {
 
     std::cerr << "BioBrain: " << offset << " total neurons across 10 regions\n";
     std::cerr << "  Language circuit: IT → Wernicke's → Broca's → Audio\n";
-    std::cerr << "  Compute: " << (metal->isAvailable() ? "Metal GPU" : "CPU-only")
+    const char* backendName = "CPU-only";
+#ifdef __APPLE__
+    backendName = metal->isAvailable() ? "Metal GPU" : "CPU-only";
+#elif defined(PLATFORM_LINUX) && !defined(NO_CUDA)
+    backendName = cuda->isAvailable() ? "CUDA GPU" : "CPU-only";
+#endif
+    std::cerr << "  Compute: " << backendName
               << " for visual cortex, CPU for RL + language\n";
 
     // Add all regions to simulation

@@ -7,6 +7,7 @@ if(CMAKE_CUDA_COMPILER)
     project(BioBrain VERSION 0.1.0 LANGUAGES CXX CUDA)
     set(HAS_CUDA TRUE)
     message(STATUS "CUDA compiler found — NVIDIA GPU acceleration enabled")
+    find_package(CUDAToolkit REQUIRED)
 elseif(APPLE)
     project(BioBrain VERSION 0.1.0 LANGUAGES CXX OBJCXX)
     set(HAS_CUDA FALSE)
@@ -282,6 +283,11 @@ target_link_libraries(BioBrain PRIVATE
     Qt6::Multimedia
     ${PLATFORM_LIBS}
 )
+
+# Link CUDA runtime when CUDA is enabled
+if(HAS_CUDA)
+    target_link_libraries(BioBrain PRIVATE CUDA::cudart)
+endif()
 
 # macOS app bundle
 if(PLATFORM_MACOS)

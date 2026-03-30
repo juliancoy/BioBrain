@@ -156,7 +156,7 @@ static dim3 gridFor(uint32_t count) {
 // ---- updateNeurons: main entry point ----
 
 UpdateResult CUDABackend::updateNeurons(BrainRegion& region, double dt,
-                                         std::span<const double> I_syn) {
+                                         Span<const double> I_syn) {
     UpdateResult result;
     if (!available_) return result;
 
@@ -337,5 +337,50 @@ UpdateResult CUDABackend::updateNeurons(BrainRegion& region, double dt,
 
     return result;
 }
+
+// ---- Extern "C" functions for HardwareProfile.cpp ----
+
+extern "C" {
+
+int biobrain_cuda_device_count() {
+    int count = 0;
+    cudaError_t err = cudaGetDeviceCount(&count);
+    if (err != cudaSuccess) return 0;
+    return count;
+}
+
+int biobrain_cuda_get_cores(int device) {
+    cudaDeviceProp prop;
+    cudaError_t err = cudaGetDeviceProperties(&prop, device);
+    if (err != cudaSuccess) return 0;
+    // Approximate CUDA cores: multiprocessors * cores per SM
+    // For Ampere (SM 8.x): 128 cores per SM
+    // For Turing (SM 7.5): 64 cores per SM
+    // For Volta (SM 7.0): 64 cores per SM
+    // For Pascal (SM 6.x): 128 cores per SM
+    int coresPerSM = 64;
+    if (prop.major == 8) coresPerSM = 128;  // Ampere
+    else if (prop.major == 6) coresPerSM = 128;  // Pascal
+    return prop.multiProcessorCount * coresPerSM;
+}
+
+size_t biobrain_cuda_get_vram(int device) {
+    cudaDeviceProp prop;
+    cudaError_t err = cudaGetDeviceProperties(&prop, device);
+    if (err != cudaSuccess) return 0;
+    return prop.totalGlobalMem;
+}
+
+const char* biobrain_cuda_get_name(int device) {
+    static char name[256];
+    cudaDeviceProp prop;
+    cudaError_t err = cudaGetDeviceProperties(&prop, device);
+    if (err != cudaSuccess) return "";
+    strncpy(name, prop.name, 255);
+    name[255] = '\0';
+    return name;
+}
+
+} // extern "C"
 
 #endif // __CUDACC__

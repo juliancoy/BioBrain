@@ -1,5 +1,6 @@
 #include "core/HardwareProfile.h"
 #include <cstdio>
+#include <cmath>
 #include <algorithm>
 #include <thread>
 

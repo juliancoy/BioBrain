@@ -6,7 +6,7 @@ CPUBackend::CPUBackend(int num_threads)
     : num_threads_(num_threads) {}
 
 UpdateResult CPUBackend::updateNeurons(BrainRegion& region, double dt,
-                                        std::span<const double> I_syn) {
+                                        Span<const double> I_syn) {
     auto& neurons = region.neurons();
     size_t count = neurons.size();
     if (count == 0) return {};

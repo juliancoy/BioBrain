@@ -3,6 +3,7 @@
 #include <atomic>
 #include <array>
 #include <mutex>
+#include <memory>
 #include <cstdint>
 
 // Formant-based vocal synthesizer driven by Broca's area output pools.
